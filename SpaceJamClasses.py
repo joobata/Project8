@@ -59,3 +59,13 @@ class Missile(SphereCollidableObject):
         Missile.cNodes[nodeName].show()
         print("Fire torpedo #" + str(Missile.missileCount))
         
+
+
+class PowerUp(SphereCollidableObject):
+    def __init__(self, loader: Loader, modelPath: str, parentNode: NodePath, nodeName: str, texPath: str, posVec: Vec3, scaleVec: float):
+        super(PowerUp, self).__init__(loader, modelPath, parentNode, nodeName, Vec3(0, 0, 0), 1.05)
+        self.modelNode.setPos(posVec)
+        self.modelNode.setScale(scaleVec)
+        self.modelNode.setName(nodeName)
+        tex = loader.loadTexture(texPath)
+        self.modelNode.setTexture(tex, 1)
