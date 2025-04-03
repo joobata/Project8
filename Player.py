@@ -5,7 +5,7 @@ from typing import Callable
 from direct.task import Task
 from direct.interval.LerpInterval import LerpFunc
 from direct.particles.ParticleEffect import ParticleEffect
-from SpaceJamClasses import Missile
+from SpaceJamClasses import Missile, Drone
 from direct.gui.OnscreenImage import OnscreenImage
 import re
 
@@ -13,18 +13,20 @@ import re
 global base
 
 class Spaceship(SphereCollidableObject):
-    def __init__(self, loader: Loader, taskMgr: TaskManager, accept: Callable[[str, Callable], None], modelPath: str, parentNode: NodePath, nodeName: str, texPath: str, posVec: Vec3, scaleVec: float):
+    def __init__(self, loader: Loader, taskMgr: TaskManager, accept: Callable[[str, Callable], None], modelPath: str, parentNode: NodePath, nodeName: str, texPath: str, posVec: Vec3, scaleVec: float, drones: list):
         super(Spaceship, self).__init__(loader, modelPath, parentNode, nodeName, Vec3(0, 0, 0), 1)
         self.taskMgr = taskMgr
         self.accept = accept
-        self.traverser = CollisionTraverser()
-        base.cTrav = self.traverser
+        self.traverser = base.cTrav
         self.modelNode.setPos(posVec)
         self.modelNode.setScale(scaleVec)
         self.modelNode.setName(nodeName)
         tex = loader.loadTexture(texPath)
         self.modelNode.setTexture(tex, 1)
         self.reloadTime = .25
+        self.MultiShot = False
+        self.homingMissiles = False
+        self.drones = drones
         self.missileDistance = 4000
         self.missileBay = 1
         self.taskMgr.add(self.CheckIntervals, 'checkMissiles', 34)
@@ -57,6 +59,11 @@ class Spaceship(SphereCollidableObject):
         self.accept('f', self.Fire)
         self.accept('d', self.DetonateMissile)
 
+    def InvertedControls(self):
+        if not hasattr(self, 'invertedControls'):
+            self.invertedControls = False  
+        self.InvertedControls = not self.InvertedControls
+
     def Thrust(self, keyDown):
         if keyDown:
             self.taskMgr.add(self.ApplyThrust, 'forward-thrust')
@@ -69,28 +76,64 @@ class Spaceship(SphereCollidableObject):
         trajectory.normalize()
         self.modelNode.setFluidPos(self.modelNode.getPos() + trajectory * rate)
         return Task.cont
+    
+    def getClosestDrone(self, drones):
+        validDrones = [d for d in drones if not d.modelNode.isEmpty()]
 
-    def Fire(self):
-        if self.missileBay:
+        if not validDrones:
+            print("No valid drones found.")
+            return None
+        closestDrone = min(validDrones, key=lambda d: (self.modelNode.getPos() - d.modelNode.getPos()).length())
+        return closestDrone
+        
+    
+    def FireMissile(self, offset=0):
             travRate = self.missileDistance
             aim = base.render.getRelativeVector(self.modelNode, Vec3.forward())
             aim.normalize()
+            Speed = 1000
             fireSolution = aim * travRate
-            inFront = aim * 150
-            travVec = fireSolution + self.modelNode.getPos()
+            inFront = aim * 150 + Vec3(offset, 0, 0)
             self.missileBay -= 1
             tag = 'Missile' + str(Missile.missileCount)
             posVec = self.modelNode.getPos() + inFront
             currentMissile = Missile(base.loader, './Assets/Phaser/phaser.egg', base.render, tag, posVec, 4.0)
             self.traverser.addCollider(currentMissile.collisionNode, self.handler)
-            self.lastMissile = currentMissile
-            Missile.Intervals[tag] = currentMissile.modelNode.posInterval(2.0, travVec, startPos = posVec, fluid = 1)
+            self.activeMissiles.append(currentMissile)
+            if self.homingMissiles == False: 
+                targetPos = fireSolution + self.modelNode.getPos()
+            else: 
+                closestDrone = self.getClosestDrone(self.drones)
+                if closestDrone:
+                    print("Homing missile locked onto:", closestDrone.modelNode.getName())
+                    targetPos = closestDrone.modelNode.getPos()
+                    Missile.Intervals[tag] = currentMissile.modelNode.posInterval(20, targetPos, startPos=posVec, fluid=1)
+                    Missile.Intervals[tag].start()
+                else:
+                    print("No valid target for homing missile. Firing straight ahead.")
+                    targetPos = fireSolution + self.modelNode.getPos()
+
+            distance = (targetPos - posVec).length()
+            travelTime = distance / Speed
+            Missile.Intervals[tag] = currentMissile.modelNode.posInterval(travelTime, targetPos, startPos=posVec, fluid=1)
             Missile.Intervals[tag].start()
+
+    def Fire(self):
+        if self.missileBay:
+            self.activeMissiles = []
+            if self.MultiShot:
+                print("Firing 3 missiles!")
+                self.FireMissile(offset=-100)
+                self.FireMissile(offset=0)
+                self.FireMissile(offset=100)
+            else:
+                 self.FireMissile(offset=0)
         else:
             if not self.taskMgr.hasTaskNamed('reload'):
                 print('Initializing reload...')
                 self.taskMgr.doMethodLater(0, self.Reload, 'reload')
                 return Task.cont
+
 
     def EnableHUD(self):
             self.Hud = OnscreenImage(image = './Assets/Hud/Reticle3b.png', pos = Vec3(0, 0, 0,), scale = 0.1)
@@ -108,15 +151,17 @@ class Spaceship(SphereCollidableObject):
             return Task.cont
         
     def DetonateMissile(self):
-        if hasattr(self, 'lastMissile') and self.lastMissile:
-          missilePos = self.lastMissile.modelNode.getPos()
-          print("Missile detonated at ", missilePos)
-          self.explodeNode.setPos(missilePos)
-          self.Explode()
-          self.DestroyObject(self.lastMissile.modelNode.getName(), missilePos)
-          self.lastMissile = None
+        if self.activeMissiles:
+            for missile in list(self.activeMissiles):  
+                missilePos = missile.modelNode.getPos()
+                print("Missile detonated at ", missilePos)
+                self.explodeNode.setPos(missilePos)
+                self.Explode()
+                self.DestroyObject(missile.modelNode.getName(), missilePos)
+
+            self.activeMissiles.clear()  
         else:
-         print("No missile to detonate!")
+            print("No missile to detonate!")
             
     def CheckIntervals(self, task):
         for i in Missile.Intervals:
@@ -139,7 +184,7 @@ class Spaceship(SphereCollidableObject):
             self.taskMgr.remove('left-turn')
 
     def ApplyLeftTurn(self, task):
-        rate = .5
+        rate = -.5 if not self.InvertedControls else 0.5
         self.modelNode.setH(self.modelNode.getH() + rate)
         return Task.cont
     
@@ -151,7 +196,7 @@ class Spaceship(SphereCollidableObject):
             self.taskMgr.remove('right-turn')
 
     def ApplyRightTurn(self, task):
-        rate = -.5
+        rate = .5 if not self.InvertedControls else -0.5
         self.modelNode.setH(self.modelNode.getH() + rate)
         return Task.cont
     
@@ -163,7 +208,7 @@ class Spaceship(SphereCollidableObject):
             self.taskMgr.remove('up-turn')
 
     def ApplyUpTurn(self, task):
-        rate = .5
+        rate = -.5 if not self.InvertedControls else 0.5
         self.modelNode.setP(self.modelNode.getP() + rate)
         return Task.cont
 
@@ -175,7 +220,7 @@ class Spaceship(SphereCollidableObject):
             self.taskMgr.remove('down-turn')
 
     def ApplyDownTurn(self, task):
-        rate = -.5
+        rate = .5 if not self.InvertedControls else -0.5
         self.modelNode.setP(self.modelNode.getP() + rate)
         return Task.cont
     
@@ -203,7 +248,6 @@ class Spaceship(SphereCollidableObject):
         self.modelNode.setR(self.modelNode.getR() + rate)
         return Task.cont
 
-
     def SetParticles(self):
         base.enableParticles()
         self.explodeEffect = ParticleEffect()
@@ -218,13 +262,29 @@ class Spaceship(SphereCollidableObject):
         print("intoNode: " + intoNode)  
         intoPosition = Vec3(entry.getSurfacePoint(base.render))
 
+        if intoNode == self.modelNode.getName():
+            print("Player spaceship destroyed!")
+            self.DestroyObject(intoNode, intoPosition)
+            return
+        
+        if "Inverter" in intoNode:
+            self.InvertedControls()
+            base.render.find(intoNode).detachNode()
+        elif "Multishot" in intoNode:
+            self.MultiShot = True
+            base.render.find(intoNode).detachNode()
+        elif "DroneHoming" in intoNode:
+            self.homingMissiles = True
+            base.render.find(intoNode).detachNode()
+
+
         tempVar = fromNode.split('_')
         print("tempVar: " + str(tempVar))
         shooter = tempVar[0]
         print("Shooter: " + str(shooter))
         tempVar = intoNode.split('-')
         print("TempVar1: " + str(tempVar))
-        tempvar = intoNode.split('-')
+        tempVar = intoNode.split('-')
         print("TempVar2: " + str(tempVar))
         victim = tempVar[0]
         print("Victim: " + str(victim))
@@ -235,16 +295,36 @@ class Spaceship(SphereCollidableObject):
         if (strippedString != "Universe"):
             print(victim, ' hit at ', intoPosition)
             self.DestroyObject(victim, intoPosition)
+        else:
+            print("Please don't blow up the universe.")
 
         print(shooter + ' is DONE.')
-        Missile.Intervals[shooter].finish()
+        if shooter != "Hero":
+            Missile.Intervals[shooter].finish()
+        else:
+            self.DestroyObject(shooter, intoPosition)
 
     def DestroyObject(self, hitID, hitPosition):
-        nodeID = base.render.find(f'**/{hitID}')
-        nodeID.detachNode()
+            nodeID = base.render.find(f'**/{hitID}')
+            if not nodeID.isEmpty():
+                nodeID.detachNode()
+                self.drones = [drone for drone in self.drones if drone.modelNode.getName() != hitID]
+                if hitID == self.modelNode.getName():
+                    self.explodeNode.setPos(hitPosition)
+                    self.Explode()
+                    self.modelNode.detachNode()
+                    self.taskMgr.remove("forward-thrust")
+                    self.taskMgr.remove("left-turn")
+                    self.taskMgr.remove("right-turn")
+                    self.taskMgr.remove("up-turn")
+                    self.taskMgr.remove("down-turn")
+                    self.taskMgr.remove("right-rotate")
+                    self.taskMgr.remove("left-rotate")
+                    return
+                
 
-        self.explodeNode.setPos(hitPosition)
-        self.Explode()
+            self.explodeNode.setPos(hitPosition)
+            self.Explode()
 
     def Explode(self):
         self.cntExplode += 1
