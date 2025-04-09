@@ -38,6 +38,8 @@ class MyApp(ShowBase):
       self.Spaceship = Player.Spaceship(self.loader, self.taskMgr, self.accept, "./Assets/Spaceships/Dumbledore.x", self.render, 'Hero', 'Assets/Spaceships/spacejet_C.png', (150, 6000, 1500), 10, self.drones)
       self.Sentinal1 = spaceJamClasses.Orbiter(self.loader, self.taskMgr, "./Assets/DroneDefender/DroneDefender.obj", self.render, "Drone", 6.0, "./Assets/DroneDefender/octotoad1_auv.png", self.Planet1, 300, "MLB", self.Spaceship)
       self.Sentinal2 = spaceJamClasses.Orbiter(self.loader, self.taskMgr, "./Assets/DroneDefender/DroneDefender.obj", self.render, "Drone", 6.0, "./Assets/DroneDefender/octotoad1_auv.png", self.Planet4, 350, "Cloud", self.Spaceship)
+      self.Wanderer1 = spaceJamClasses.Wanderer(self.loader, "./Assets/DroneDefender/DroneDefender.obj", self.render, "Wanderer1", 6.0, "Assets/DroneDefender/octotoad1_auv.png", self.Spaceship)
+      self.Wanderer2 = spaceJamClasses.Wanderer(self.loader, "./Assets/DroneDefender/DroneDefender.obj", self.render, "Wanderer2", 6.0, "Assets/DroneDefender/octotoad1_auv.png", self.Spaceship)
       self.SetCamera()
       
       fullCycle = 30
